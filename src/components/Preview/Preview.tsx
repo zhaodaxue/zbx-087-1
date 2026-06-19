@@ -16,7 +16,10 @@ export const Preview: React.FC = () => {
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
 
-  const currentCue = useMemo(() => getCueAtTime(cues, currentTime), [cues, currentTime]);
+  const currentCue = useMemo(
+    () => getCueAtTime(cues, currentTime),
+    [cues, currentTime]
+  );
 
   useEffect(() => {
     if (isPlaying && totalDuration > 0) {
@@ -29,7 +32,6 @@ export const Preview: React.FC = () => {
         setCurrentTime((prev) => {
           const next = prev + delta;
           if (next >= totalDuration) {
-            setIsPlaying(false);
             return totalDuration;
           }
           return next;
@@ -46,7 +48,13 @@ export const Preview: React.FC = () => {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [isPlaying, totalDuration, setCurrentTime, setIsPlaying]);
+  }, [isPlaying, totalDuration, setCurrentTime]);
+
+  useEffect(() => {
+    if (isPlaying && currentTime >= totalDuration && totalDuration > 0) {
+      setIsPlaying(false);
+    }
+  }, [currentTime, isPlaying, totalDuration, setIsPlaying]);
 
   const handlePlayPause = () => {
     if (currentTime >= totalDuration) {
@@ -110,22 +118,24 @@ export const Preview: React.FC = () => {
       </div>
 
       <div className="mb-4">
-        <div className="relative h-2 bg-zinc-800 rounded-full overflow-hidden">
-          <div
-            className="absolute top-0 left-0 h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full transition-all duration-100"
-            style={{ width: `${progressPercentage}%` }}
+        <div className="relative h-8 flex items-center">
+          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-zinc-800 rounded-full overflow-hidden pointer-events-none">
+            <div
+              className="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full"
+              style={{ width: `${progressPercentage}%` }}
+            />
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={totalDuration || 0}
+            step={0.1}
+            value={currentTime}
+            onChange={handleSeek}
+            className="w-full h-8 z-10 bg-transparent"
+            disabled={totalDuration === 0}
           />
         </div>
-        <input
-          type="range"
-          min={0}
-          max={totalDuration || 0}
-          step={0.1}
-          value={currentTime}
-          onChange={handleSeek}
-          className="absolute opacity-0 w-full cursor-pointer -mt-2"
-          disabled={totalDuration === 0}
-        />
       </div>
 
       <div className="flex items-center justify-between mb-4">
@@ -170,7 +180,7 @@ export const Preview: React.FC = () => {
 
       <div className="mt-6 pt-4 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 text-center">
-          拖动时间轴或使用滑块预览队形
+          拖动滑块或使用控制按钮预览队形
         </p>
       </div>
     </div>

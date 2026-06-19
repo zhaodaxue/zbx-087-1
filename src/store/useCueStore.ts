@@ -6,6 +6,11 @@ import { DEFAULT_FORMATIONS } from '../constants/config';
 
 const generateId = (): string => Math.random().toString(36).substring(2, 11);
 
+const clampTime = (time: number, max: number): number => {
+  if (max <= 0) return 0;
+  return Math.min(Math.max(time, 0), max);
+};
+
 const createDefaultCues = (): Cue[] => [
   {
     id: generateId(),
@@ -70,12 +75,13 @@ interface CueState {
 
 export const useCueStore = create<CueState>((set, get) => {
   const initialCues = createDefaultCues();
+  const initialDuration = calculateTotalDuration(initialCues);
   return {
     cues: initialCues,
     currentTime: 0,
     isPlaying: false,
     violations: validateAllRules(initialCues),
-    totalDuration: calculateTotalDuration(initialCues),
+    totalDuration: initialDuration,
     editingCueId: null,
 
     addCue: (cue?: Partial<Cue>) => {
@@ -90,10 +96,12 @@ export const useCueStore = create<CueState>((set, get) => {
       };
       set((state) => {
         const newCues = [...state.cues, newCue];
+        const newDuration = calculateTotalDuration(newCues);
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
-          totalDuration: calculateTotalDuration(newCues),
+          totalDuration: newDuration,
+          currentTime: clampTime(state.currentTime, newDuration),
         };
       });
     },
@@ -103,10 +111,12 @@ export const useCueStore = create<CueState>((set, get) => {
         const newCues = state.cues.map((cue) =>
           cue.id === id ? { ...cue, ...updates } : cue
         );
+        const newDuration = calculateTotalDuration(newCues);
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
-          totalDuration: calculateTotalDuration(newCues),
+          totalDuration: newDuration,
+          currentTime: clampTime(state.currentTime, newDuration),
         };
       });
     },
@@ -114,11 +124,14 @@ export const useCueStore = create<CueState>((set, get) => {
     deleteCue: (id: string) => {
       set((state) => {
         const newCues = state.cues.filter((cue) => cue.id !== id);
+        const newDuration = calculateTotalDuration(newCues);
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
-          totalDuration: calculateTotalDuration(newCues),
+          totalDuration: newDuration,
+          currentTime: clampTime(state.currentTime, newDuration),
           editingCueId: state.editingCueId === id ? null : state.editingCueId,
+          isPlaying: newDuration === 0 ? false : state.isPlaying,
         };
       });
     },
@@ -131,15 +144,18 @@ export const useCueStore = create<CueState>((set, get) => {
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
-          totalDuration: calculateTotalDuration(newCues),
+          totalDuration: state.totalDuration,
         };
       });
     },
 
     setCurrentTime: (time: number | ((prev: number) => number)) => {
-      set((state) => ({
-        currentTime: typeof time === 'function' ? time(state.currentTime) : time,
-      }));
+      set((state) => {
+        const raw = typeof time === 'function' ? time(state.currentTime) : time;
+        return {
+          currentTime: clampTime(raw, state.totalDuration),
+        };
+      });
     },
 
     setIsPlaying: (playing: boolean) => {
@@ -152,21 +168,24 @@ export const useCueStore = create<CueState>((set, get) => {
 
     resetCues: () => {
       const defaultCues = createDefaultCues();
+      const defaultDuration = calculateTotalDuration(defaultCues);
       set({
         cues: defaultCues,
         currentTime: 0,
         isPlaying: false,
         violations: validateAllRules(defaultCues),
-        totalDuration: calculateTotalDuration(defaultCues),
+        totalDuration: defaultDuration,
         editingCueId: null,
       });
     },
 
     recalculateViolations: () => {
-      const { cues } = get();
+      const { cues, currentTime } = get();
+      const newDuration = calculateTotalDuration(cues);
       set({
         violations: validateAllRules(cues),
-        totalDuration: calculateTotalDuration(cues),
+        totalDuration: newDuration,
+        currentTime: clampTime(currentTime, newDuration),
       });
     },
   };

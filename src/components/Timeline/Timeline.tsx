@@ -5,6 +5,18 @@ import { calculateCueTimings, formatTime } from '../../modules/timeUtils';
 import { getFormationColor, MAX_TOTAL_DURATION } from '../../constants/config';
 import { cn } from '../../lib/utils';
 
+const generateTimeMarkers = (totalDuration: number): number[] => {
+  const markers: number[] = [];
+  const interval = totalDuration > 300 ? 60 : totalDuration > 120 ? 30 : 10;
+  for (let t = 0; t <= totalDuration; t += interval) {
+    markers.push(t);
+  }
+  if (markers[markers.length - 1] !== totalDuration) {
+    markers.push(totalDuration);
+  }
+  return markers;
+};
+
 export const Timeline: React.FC = () => {
   const cues = useCueStore((state) => state.cues);
   const currentTime = useCueStore((state) => state.currentTime);
@@ -36,19 +48,7 @@ export const Timeline: React.FC = () => {
 
   const currentCueIndex = getCueIndexAtTime(currentTime);
 
-  const generateTimeMarkers = () => {
-    const markers = [];
-    const interval = totalDuration > 300 ? 60 : totalDuration > 120 ? 30 : 10;
-    for (let t = 0; t <= totalDuration; t += interval) {
-      markers.push(t);
-    }
-    if (markers[markers.length - 1] !== totalDuration) {
-      markers.push(totalDuration);
-    }
-    return markers;
-  };
-
-  const markers = useMemo(() => generateTimeMarkers(), [totalDuration]);
+  const markers = useMemo(() => generateTimeMarkers(totalDuration), [totalDuration]);
   const progressPercentage = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
 
   return (
