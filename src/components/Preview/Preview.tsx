@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useMemo } from 'react';
-import { Play, Pause, SkipBack, SkipForward } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Repeat, Repeat1 } from 'lucide-react';
 import { useCueStore } from '../../store/useCueStore';
 import { getCueAtTime, formatTime } from '../../modules/timeUtils';
 import { getFormationColor, SWITCH_MODE_LABELS } from '../../constants/config';
@@ -10,8 +10,15 @@ export const Preview: React.FC = () => {
   const currentTime = useCueStore((state) => state.currentTime);
   const totalDuration = useCueStore((state) => state.totalDuration);
   const isPlaying = useCueStore((state) => state.isPlaying);
+  const isLoopMode = useCueStore((state) => state.isLoopMode);
+  const loopRange = useCueStore((state) => state.loopRange);
+  const loopCount = useCueStore((state) => state.loopCount);
+  const currentLoopIndex = useCueStore((state) => state.currentLoopIndex);
   const setCurrentTime = useCueStore((state) => state.setCurrentTime);
   const setIsPlaying = useCueStore((state) => state.setIsPlaying);
+  const setCurrentLoopIndex = useCueStore((state) => state.setCurrentLoopIndex);
+  const snapTimeToLoop = useCueStore((state) => state.snapTimeToLoop);
+  const setLoopMode = useCueStore((state) => state.setLoopMode);
 
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
@@ -21,8 +28,11 @@ export const Preview: React.FC = () => {
     [cues, currentTime]
   );
 
+  const playEnd = isLoopMode && loopRange ? loopRange.end : totalDuration;
+  const playStart = isLoopMode && loopRange ? loopRange.start : 0;
+
   useEffect(() => {
-    if (isPlaying && totalDuration > 0) {
+    if (isPlaying && totalDuration > 0 && (!isLoopMode || loopRange)) {
       lastTimeRef.current = performance.now();
 
       const animate = (timestamp: number) => {
@@ -31,8 +41,9 @@ export const Preview: React.FC = () => {
 
         setCurrentTime((prev) => {
           const next = prev + delta;
-          if (next >= totalDuration) {
-            return totalDuration;
+          const end = isLoopMode && loopRange ? loopRange.end : totalDuration;
+          if (next >= end) {
+            return end;
           }
           return next;
         });
@@ -48,42 +59,85 @@ export const Preview: React.FC = () => {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [isPlaying, totalDuration, setCurrentTime]);
+  }, [isPlaying, totalDuration, isLoopMode, loopRange, setCurrentTime]);
 
   useEffect(() => {
-    if (isPlaying && currentTime >= totalDuration && totalDuration > 0) {
-      setIsPlaying(false);
+    if (!isPlaying) return;
+
+    if (isLoopMode && loopRange) {
+      if (currentTime >= loopRange.end) {
+        const nextIndex = currentLoopIndex + 1;
+        if (loopCount > 0 && nextIndex >= loopCount) {
+          setIsPlaying(false);
+          setCurrentTime(loopRange.end);
+        } else {
+          setCurrentTime(loopRange.start);
+          setCurrentLoopIndex(nextIndex);
+        }
+      }
+    } else {
+      if (currentTime >= totalDuration && totalDuration > 0) {
+        setIsPlaying(false);
+      }
     }
-  }, [currentTime, isPlaying, totalDuration, setIsPlaying]);
+  }, [currentTime, isPlaying, totalDuration, isLoopMode, loopRange, loopCount, currentLoopIndex, setIsPlaying, setCurrentTime, setCurrentLoopIndex]);
 
   const handlePlayPause = () => {
-    if (currentTime >= totalDuration) {
-      setCurrentTime(0);
-      setIsPlaying(true);
+    if (isLoopMode && loopRange) {
+      if (currentTime >= loopRange.end) {
+        setCurrentTime(loopRange.start);
+        setCurrentLoopIndex(0);
+        setIsPlaying(true);
+      } else {
+        setIsPlaying(!isPlaying);
+      }
     } else {
-      setIsPlaying(!isPlaying);
+      if (currentTime >= totalDuration) {
+        setCurrentTime(0);
+        setIsPlaying(true);
+      } else {
+        setIsPlaying(!isPlaying);
+      }
     }
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
-    setCurrentTime(time);
+    const snapped = snapTimeToLoop(time);
+    setCurrentTime(snapped);
   };
 
   const handleSkipBack = () => {
-    setCurrentTime(0);
+    if (isLoopMode && loopRange) {
+      setCurrentTime(loopRange.start);
+    } else {
+      setCurrentTime(0);
+    }
     setIsPlaying(false);
+    setCurrentLoopIndex(0);
   };
 
   const handleSkipForward = () => {
-    setCurrentTime(totalDuration);
+    if (isLoopMode && loopRange) {
+      setCurrentTime(loopRange.end);
+    } else {
+      setCurrentTime(totalDuration);
+    }
     setIsPlaying(false);
+  };
+
+  const handleToggleLoop = () => {
+    setLoopMode(!isLoopMode);
   };
 
   const progressPercentage = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
   const formationColor = currentCue ? getFormationColor(currentCue.formation) : '#6B7280';
 
   const currentCueIndex = cues.findIndex((c) => c.id === currentCue?.id) + 1;
+
+  const loopStartPercent = loopRange && totalDuration > 0 ? (loopRange.start / totalDuration) * 100 : 0;
+  const loopEndPercent = loopRange && totalDuration > 0 ? (loopRange.end / totalDuration) * 100 : 0;
+  const loopWidthPercent = loopEndPercent - loopStartPercent;
 
   return (
     <div className="bg-zinc-900/60 backdrop-blur-sm rounded-xl border border-zinc-800 p-6">
@@ -115,11 +169,46 @@ export const Preview: React.FC = () => {
             )}
           </div>
         )}
+        {isLoopMode && loopRange && (
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <span className="text-xs text-amber-400 flex items-center gap-1">
+              <Repeat size={12} />
+              循环排练中
+            </span>
+            {loopCount > 0 && (
+              <span className="text-xs text-zinc-400">
+                第 {currentLoopIndex + 1} / {loopCount} 次
+              </span>
+            )}
+            {loopCount === 0 && (
+              <span className="text-xs text-zinc-500">无限循环</span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mb-4">
         <div className="relative h-8 flex items-center">
           <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-zinc-800 rounded-full overflow-hidden pointer-events-none">
+            {loopRange && isLoopMode && (
+              <>
+                <div
+                  className="absolute top-0 bottom-0 bg-zinc-900/70"
+                  style={{ left: 0, width: `${loopStartPercent}%` }}
+                />
+                <div
+                  className="absolute top-0 bottom-0 bg-zinc-900/70"
+                  style={{ right: 0, width: `${100 - loopEndPercent}%` }}
+                />
+                <div
+                  className="absolute top-0 bottom-0 bg-amber-500/20"
+                  style={{
+                    left: `${loopStartPercent}%`,
+                    width: `${loopWidthPercent}%`,
+                  }}
+                />
+              </>
+            )}
             <div
               className="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full"
               style={{ width: `${progressPercentage}%` }}
@@ -142,9 +231,15 @@ export const Preview: React.FC = () => {
         <span className="text-sm font-mono text-zinc-400">
           {formatTime(currentTime)}
         </span>
-        <span className="text-sm font-mono text-zinc-500">
-          {formatTime(totalDuration)}
-        </span>
+        {isLoopMode && loopRange ? (
+          <span className="text-xs text-amber-400 font-mono">
+            {formatTime(loopRange.start)} - {formatTime(loopRange.end)}
+          </span>
+        ) : (
+          <span className="text-sm font-mono text-zinc-500">
+            {formatTime(totalDuration)}
+          </span>
+        )}
       </div>
 
       <div className="flex items-center justify-center gap-2">
@@ -152,6 +247,7 @@ export const Preview: React.FC = () => {
           onClick={handleSkipBack}
           className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
           disabled={totalDuration === 0}
+          title="回到起点"
         >
           <SkipBack size={20} />
         </button>
@@ -173,14 +269,30 @@ export const Preview: React.FC = () => {
           onClick={handleSkipForward}
           className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
           disabled={totalDuration === 0}
+          title="跳到结尾"
         >
           <SkipForward size={20} />
+        </button>
+
+        <button
+          onClick={handleToggleLoop}
+          className={cn(
+            'p-2 rounded-lg transition-colors ml-2',
+            isLoopMode
+              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+              : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800',
+            !loopRange && 'opacity-50 cursor-not-allowed'
+          )}
+          disabled={!loopRange}
+          title={loopRange ? '切换循环模式' : '请先在时间轴选择循环区间'}
+        >
+          {loopCount > 0 ? <Repeat1 size={20} /> : <Repeat size={20} />}
         </button>
       </div>
 
       <div className="mt-6 pt-4 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 text-center">
-          拖动滑块或使用控制按钮预览队形
+          {isLoopMode ? '循环播放模式：在区间内重复播放' : '拖动滑块或使用控制按钮预览队形'}
         </p>
       </div>
     </div>

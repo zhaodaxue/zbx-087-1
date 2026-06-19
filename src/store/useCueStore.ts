@@ -11,6 +11,51 @@ const clampTime = (time: number, max: number): number => {
   return Math.min(Math.max(time, 0), max);
 };
 
+const MIN_LOOP_DURATION = 0.5;
+
+interface LoopRange {
+  start: number;
+  end: number;
+}
+
+const isValidLoopRange = (range: LoopRange | null, totalDuration: number): boolean => {
+  if (!range) return false;
+  if (totalDuration <= 0) return false;
+  if (range.start < 0 || range.end > totalDuration) return false;
+  if (range.end - range.start < MIN_LOOP_DURATION) return false;
+  return true;
+};
+
+const clampTimeToLoop = (time: number, range: LoopRange): number => {
+  return Math.min(Math.max(time, range.start), range.end);
+};
+
+const adjustLoopRange = (
+  range: LoopRange | null,
+  oldDuration: number,
+  newDuration: number
+): { range: LoopRange | null; message: string | null } => {
+  if (!range) return { range: null, message: null };
+  if (newDuration <= 0) return { range: null, message: '总时长变为 0，循环区间已清除' };
+
+  let { start, end } = range;
+  let message: string | null = null;
+
+  if (end > newDuration) {
+    end = newDuration;
+    message = '总时长缩短，循环区间结束点已自动收缩';
+  }
+  if (start > newDuration) {
+    start = Math.max(0, newDuration - MIN_LOOP_DURATION);
+  }
+
+  if (end - start < MIN_LOOP_DURATION) {
+    return { range: null, message: '循环区间过小，已自动清除并退出循环模式' };
+  }
+
+  return { range: { start, end }, message };
+};
+
 const createDefaultCues = (): Cue[] => [
   {
     id: generateId(),
@@ -62,6 +107,12 @@ interface CueState {
   totalDuration: number;
   editingCueId: string | null;
 
+  loopRange: LoopRange | null;
+  isLoopMode: boolean;
+  loopCount: number;
+  currentLoopIndex: number;
+  loopMessage: string | null;
+
   addCue: (cue?: Partial<Cue>) => void;
   updateCue: (id: string, updates: Partial<Cue>) => void;
   deleteCue: (id: string) => void;
@@ -71,6 +122,14 @@ interface CueState {
   setEditingCueId: (id: string | null) => void;
   resetCues: () => void;
   recalculateViolations: () => void;
+
+  setLoopRange: (start: number, end: number) => void;
+  clearLoopRange: () => void;
+  setLoopMode: (enabled: boolean) => void;
+  setLoopCount: (count: number) => void;
+  setCurrentLoopIndex: (index: number) => void;
+  snapTimeToLoop: (time: number) => number;
+  clearLoopMessage: () => void;
 }
 
 export const useCueStore = create<CueState>((set, get) => {
@@ -83,6 +142,12 @@ export const useCueStore = create<CueState>((set, get) => {
     violations: validateAllRules(initialCues),
     totalDuration: initialDuration,
     editingCueId: null,
+
+    loopRange: null,
+    isLoopMode: false,
+    loopCount: 0,
+    currentLoopIndex: 0,
+    loopMessage: null,
 
     addCue: (cue?: Partial<Cue>) => {
       const newCue: Cue = {
@@ -97,11 +162,21 @@ export const useCueStore = create<CueState>((set, get) => {
       set((state) => {
         const newCues = [...state.cues, newCue];
         const newDuration = calculateTotalDuration(newCues);
+        const { range: adjustedRange, message } = adjustLoopRange(
+          state.loopRange,
+          state.totalDuration,
+          newDuration
+        );
+        const newIsLoopMode = adjustedRange ? state.isLoopMode : false;
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
           totalDuration: newDuration,
           currentTime: clampTime(state.currentTime, newDuration),
+          loopRange: adjustedRange,
+          isLoopMode: newIsLoopMode,
+          loopMessage: message,
+          currentLoopIndex: 0,
         };
       });
     },
@@ -112,11 +187,21 @@ export const useCueStore = create<CueState>((set, get) => {
           cue.id === id ? { ...cue, ...updates } : cue
         );
         const newDuration = calculateTotalDuration(newCues);
+        const { range: adjustedRange, message } = adjustLoopRange(
+          state.loopRange,
+          state.totalDuration,
+          newDuration
+        );
+        const newIsLoopMode = adjustedRange ? state.isLoopMode : false;
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
           totalDuration: newDuration,
           currentTime: clampTime(state.currentTime, newDuration),
+          loopRange: adjustedRange,
+          isLoopMode: newIsLoopMode,
+          loopMessage: message,
+          currentLoopIndex: 0,
         };
       });
     },
@@ -125,6 +210,12 @@ export const useCueStore = create<CueState>((set, get) => {
       set((state) => {
         const newCues = state.cues.filter((cue) => cue.id !== id);
         const newDuration = calculateTotalDuration(newCues);
+        const { range: adjustedRange, message } = adjustLoopRange(
+          state.loopRange,
+          state.totalDuration,
+          newDuration
+        );
+        const newIsLoopMode = adjustedRange ? state.isLoopMode : false;
         return {
           cues: newCues,
           violations: validateAllRules(newCues),
@@ -132,6 +223,10 @@ export const useCueStore = create<CueState>((set, get) => {
           currentTime: clampTime(state.currentTime, newDuration),
           editingCueId: state.editingCueId === id ? null : state.editingCueId,
           isPlaying: newDuration === 0 ? false : state.isPlaying,
+          loopRange: adjustedRange,
+          isLoopMode: newIsLoopMode,
+          loopMessage: message,
+          currentLoopIndex: 0,
         };
       });
     },
@@ -145,6 +240,7 @@ export const useCueStore = create<CueState>((set, get) => {
           cues: newCues,
           violations: validateAllRules(newCues),
           totalDuration: state.totalDuration,
+          currentLoopIndex: 0,
         };
       });
     },
@@ -159,7 +255,12 @@ export const useCueStore = create<CueState>((set, get) => {
     },
 
     setIsPlaying: (playing: boolean) => {
-      set({ isPlaying: playing });
+      set((state) => {
+        if (playing && state.isLoopMode && state.loopRange && state.loopCount > 0) {
+          return { isPlaying: true, currentLoopIndex: 0 };
+        }
+        return { isPlaying: playing };
+      });
     },
 
     setEditingCueId: (id: string | null) => {
@@ -176,17 +277,107 @@ export const useCueStore = create<CueState>((set, get) => {
         violations: validateAllRules(defaultCues),
         totalDuration: defaultDuration,
         editingCueId: null,
+        loopRange: null,
+        isLoopMode: false,
+        loopCount: 0,
+        currentLoopIndex: 0,
+        loopMessage: null,
       });
     },
 
     recalculateViolations: () => {
-      const { cues, currentTime } = get();
+      const { cues, currentTime, loopRange, totalDuration: oldDuration, isLoopMode } = get();
       const newDuration = calculateTotalDuration(cues);
+      const { range: adjustedRange, message } = adjustLoopRange(
+        loopRange,
+        oldDuration,
+        newDuration
+      );
+      const newIsLoopMode = adjustedRange ? isLoopMode : false;
       set({
         violations: validateAllRules(cues),
         totalDuration: newDuration,
         currentTime: clampTime(currentTime, newDuration),
+        loopRange: adjustedRange,
+        isLoopMode: newIsLoopMode,
+        loopMessage: message,
+        currentLoopIndex: 0,
       });
+    },
+
+    setLoopRange: (start: number, end: number) => {
+      set((state) => {
+        const clampedStart = clampTime(start, state.totalDuration);
+        const clampedEnd = clampTime(end, state.totalDuration);
+        const realStart = Math.min(clampedStart, clampedEnd);
+        const realEnd = Math.max(clampedStart, clampedEnd);
+
+        if (realEnd - realStart < MIN_LOOP_DURATION) {
+          return {
+            loopRange: state.loopRange,
+            loopMessage: '循环区间过小，请选择更长的时间段',
+          };
+        }
+
+        const newRange = { start: realStart, end: realEnd };
+        const newTime = clampTimeToLoop(state.currentTime, newRange);
+
+        return {
+          loopRange: newRange,
+          currentTime: newTime,
+          loopMessage: null,
+          currentLoopIndex: 0,
+        };
+      });
+    },
+
+    clearLoopRange: () => {
+      set({
+        loopRange: null,
+        isLoopMode: false,
+        loopMessage: null,
+        currentLoopIndex: 0,
+      });
+    },
+
+    setLoopMode: (enabled: boolean) => {
+      set((state) => {
+        if (enabled && !isValidLoopRange(state.loopRange, state.totalDuration)) {
+          return {
+            isLoopMode: false,
+            loopMessage: '请先在时间轴上拖拽选择循环区间',
+          };
+        }
+        if (enabled && state.loopRange) {
+          return {
+            isLoopMode: true,
+            currentTime: clampTimeToLoop(state.currentTime, state.loopRange),
+            currentLoopIndex: 0,
+            loopMessage: null,
+          };
+        }
+        return { isLoopMode: false, loopMessage: null };
+      });
+    },
+
+    setLoopCount: (count: number) => {
+      set({ loopCount: Math.max(0, Math.floor(count)) });
+    },
+
+    setCurrentLoopIndex: (index: number) => {
+      set({ currentLoopIndex: Math.max(0, index) });
+    },
+
+    snapTimeToLoop: (time: number): number => {
+      const state = get();
+      if (!state.isLoopMode || !state.loopRange) {
+        return clampTime(time, state.totalDuration);
+      }
+      return clampTimeToLoop(time, state.loopRange);
+    },
+
+    clearLoopMessage: () => {
+      set({ loopMessage: null });
     },
   };
 });
